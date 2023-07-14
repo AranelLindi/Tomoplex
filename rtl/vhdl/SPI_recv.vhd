@@ -4,7 +4,7 @@
 -- 
 -- Create Date: 07/07/2023 01:50:56 PM
 -- Design Name: 
--- Module Name: SPI_recv - SPI_recv_arch
+-- Module Name: SPI_Slave - SPI_Slave_arch
 -- Project Name: Tomoplex
 -- Target Devices: 
 -- Tool Versions: 
@@ -27,7 +27,7 @@ USE IEEE.MATH_REAL.ALL;
 --library UNISIM;
 --use UNISIM.VComponents.all;
 
-ENTITY SPI_recv IS
+ENTITY SPI_Slave IS
     GENERIC (
         -- Size of transfer word in bits, must be power of two (why?)
         DATA_WIDTH : NATURAL
@@ -57,9 +57,9 @@ ENTITY SPI_recv IS
         -- Received data is valid.
         dout_valid : OUT STD_LOGIC
     );
-END SPI_recv;
+END SPI_Slave;
 
-ARCHITECTURE SPI_recv_arch OF SPI_recv IS
+ARCHITECTURE SPI_Slave_arch OF SPI_Slave IS
     CONSTANT c_bit_cnt_width : NATURAL := NATURAL(ceil(log2(REAL(DATA_WIDTH))));
 
     SIGNAL s_scl_meta : STD_LOGIC;
@@ -225,4 +225,4 @@ BEGIN
             END IF;
         END IF;
     END PROCESS;
-END SPI_recv_arch;
+END SPI_Slave_arch;

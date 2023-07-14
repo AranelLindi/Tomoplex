@@ -83,7 +83,7 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
         );
     END COMPONENT;
 
-    COMPONENT SPI_recv
+    COMPONENT SPI_Slave
         GENERIC (
             DATA_WIDTH : NATURAL
         );
@@ -116,7 +116,7 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
     SIGNAL s_dout_valid : STD_LOGIC;
 BEGIN
     -- SPI Receiver.
-    spi_recv_inst : SPI_recv
+    spi_slave_inst : SPI_Slave
     GENERIC MAP(
         DATA_WIDTH => SPI_DATAWIDTH
     )
