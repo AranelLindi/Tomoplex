@@ -70,8 +70,8 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
             adc_en : IN STD_LOGIC;
             send : IN STD_LOGIC;
             dout : OUT STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
-            slave_ready : in std_Logic;
-            deselect : in std_logic
+            spi_tx_rdy : in std_Logic;
+            spi_tx_con : out std_logic
         );
     END COMPONENT;
 
@@ -162,25 +162,37 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
     SIGNAL s_mux_switchpos : STD_LOGIC_VECTOR(7 downto 0);
 
     -- SPI related signals.
-    SIGNAL s_miso : STD_LOGIC;
+    SIGNAL s_miso : STD_LOGIC := '0';
+    SIGNAL s_mosi : STD_LOGIC;
 
     SIGNAL s_din : STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
-    SIGNAL s_dout : STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0) := (others => '0');
-    SIGNAL s_rx_rdy : STD_LOGIC;
+    SIGNAL s_dout : STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
+    SIGNAL s_rx_valid : STD_LOGIC;
     signal s_tx_rdy : std_logic;
-    signal s_tx_ack: std_logic; --  unconnected TODO
+    signal s_tx_con: std_logic; -- Shows if continuous transmitting is wanted.
     
     signal s_do : std_logic_vector((SPI_DATAWIDTH-1) downto 0) := (others => '0'); -- unconnected TODO
     signal s_di : std_logic_vector((SPI_DATAWIDTH-1) downto 0) := (others => '0'); -- unconnected TODO
+    
+    
+    signal s_spi_send : std_logic_vector(SPI_DATAWIDTH-1 downto 0);
+    
+    
     
     -- Command Decoder.
     Type CommandDecoderStates IS (S_Decode, S_Reset);
     Signal s_commanddecoderstate : CommandDecoderStates := S_Decode;
 BEGIN
     -- Debug:
-    miso <= s_rx_rdy;
-    mux(7 downto 0) <= s_dout;
+    --miso <= ;
+    mux(7 downto 0) <= s_spi_send;
     mux(mux'high downto 8) <= (others => '0');
+    
+    -- Drive outputs.
+    miso <= s_send;-- s_miso;
+        
+    -- Read inputs.
+    s_mosi <= mosi;
 
 
     -- SPI Receiver.
@@ -189,20 +201,20 @@ BEGIN
             N => SPI_DATAWIDTH,
             CPOL => '0',
             CPHA => '0',
-            PREFETCH => 3
+            PREFETCH => 3 -- 3 is default value !
         )
         port map (
-            clk_i => clk,
-            spi_ssel_i => cs,
-            spi_sck_i => scl,
-            spi_mosi_i => mosi,
-            spi_miso_o => miso,
-            di_req_o => s_tx_rdy,
-            di_i => s_di,
-            wren_i => s_tx_ack,
+            clk_i => clk, -- done
+            spi_ssel_i => cs, -- done
+            spi_sck_i => scl, -- done
+            spi_mosi_i => s_mosi, -- done
+            spi_miso_o => s_miso, -- done 
+            di_req_o => s_tx_rdy, -- TBD
+            di_i => s_spi_send, -- done
+            wren_i => s_tx_con,  -- TBD
             wr_ack_o => open, -- If needed define new signal for it
-            do_valid_o => s_rx_rdy,
-            do_o => s_do,
+            do_valid_o => s_rx_valid,
+            do_o => s_dout,
             do_transfer_o => open,
             wren_o => open,
             rx_bit_next_o => open,
@@ -222,20 +234,20 @@ BEGIN
         adc_val => adc_val,
         adc_en => adc_en,
         send => s_send, -- TODO!
-        dout => s_dout,
-        slave_ready => s_tx_rdy,
-        deselect => cs
+        dout => s_spi_send, -- SPI entity related
+        spi_tx_rdy => s_tx_rdy, -- SPI entity related
+        spi_tx_con => s_tx_con -- SPI entity related
         );
 
     -- MUX_CTRL
-    mux_ctrl_inst : MUX_CTRL
-    GENERIC MAP(MUX_LEN => MUX_LEN)
-    PORT MAP(
-        clk => clk,
-        rst => rst,
-        reg => s_register,
-        mux => mux
-    );
+--    mux_ctrl_inst : MUX_CTRL
+--    GENERIC MAP(MUX_LEN => MUX_LEN)
+--    PORT MAP(
+--        clk => clk,
+--        rst => rst,
+--        reg => s_register,
+--        mux => mux
+--    );
     
     
     -- Command Decoder
@@ -250,11 +262,11 @@ BEGIN
                 s_mux_switchpos <= (others => '0'); -- 0 means: All Switches off (appropiate behaviour after global reset)
                 s_commanddecoderstate <= S_Decode;
             else
-                if s_rx_rdy = '1' then
-                    report "New Data was received via SPI!";
+                if s_rx_valid = '1' then
+                    --report "New Data was received via SPI!";
                     -- new Data byte was received. Decode ->
                     i := to_integer(unsigned(s_dout));
-                    report "The value of the data is " & integer'image(i);
+                    --report "The value of the data is " & integer'image(i);
                     
                     case s_commanddecoderstate is
                         when S_Decode =>
@@ -264,6 +276,7 @@ BEGIN
                                 s_commanddecoderstate <= S_Reset;
                             elsif i = 128 then
                                 -- Send command
+                                report "Send command received";
                                 s_send <= '1';
                                 s_commanddecoderstate <= S_Reset;
                             elsif (i >= 0 and i <= 16) or i = 255 then

@@ -67,10 +67,33 @@ architecture ADC2SPI_tb_arch of ADC2SPI_tb is
     signal mosi: STD_LOGIC;
     signal miso: STD_LOGIC;
     signal cs: STD_LOGIC;
-    signal mux: STD_LOGIC_VECTOR((MUX_LEN - 1) DOWNTO 0) ;
+    signal mux: STD_LOGIC_VECTOR((MUX_LEN - 1) DOWNTO 0);
 
     constant clock_period: time := 10 ns; -- 100 MHz
     constant spi_period : time := 25 us;
+    
+    
+    procedure SPI2Slave(signal scl : in std_logic; signal cs : out std_logic; signal mosi : out std_logic; constant dataword : in std_logic_vector(SPI_DATAWIDTH-1 downto 0); constant devicedeselect : in boolean) is
+    begin
+        wait until falling_edge(scl);
+        
+        cs <= '0';
+        
+        -- Important: MSB is sent first, LSB last!
+        for i in SPI_DATAWIDTH-1 downto 0 loop
+            mosi <= dataword(i);
+            wait for spi_period;    
+        end loop;
+        
+        mosi <= '0';
+        
+        -- If a response from slave is requested then remain cs signal to low to allow slave to respond.
+        if devicedeselect = true then
+            cs <= '1';
+        else
+            cs <= '0';
+        end if;
+    end procedure;
 begin
     -- design under test.
     dut: tomoplex_main
@@ -94,26 +117,20 @@ begin
     -- Simulates communication with spi master.
     stimulus_spi: process
     begin
-
         -- Put initialisation code here
-        rst <= '1', '0' after 1 * clock_period;
+        rst <= '1';
+        wait for 10 * clock_period;
+        rst <= '0';
         mosi <= '0';
         cs <= '1';
-
-        wait for 1 * spi_period;
+        
         -- Put test bench stimulus code here
+        
+        wait for 12 * clock_period; -- wait enough time to make sure that some ADC samples could be written into the fifo before 'send' signal was given
     
-        cs <= '0';
-        mosi <= '1';
-        wait for spi_period;
-        mosi <= '0';
-        wait for 6 * spi_period;
-        mosi <= '0';
-        cs <= '1';
-        wait for spi_period;
-        cs <= '1';
-        wait for 1 * spi_period;
-        cs <= '1';
+        SPI2Slave(scl, cs, mosi, std_logic_vector(to_unsigned(128, SPI_DATAWIDTH)), false);
+        
+        wait for 20 * spi_period;
         wait;
     end process;
     
@@ -121,12 +138,17 @@ begin
     stimulus_adc : process
     begin
         -- Put initialisation code here
+        wait for 10 * clock_period;
+        
         adc_val <= (Others => '0');
-        adc_en <= '0';
+        adc_en <= '0';        
+        wait for 10 * clock_period;
+        
         
         -- Put test bench stimulus code here
         
-        for i in 0 to 15 loop
+        wait until rising_edge(clk);
+        for i in 1 to 15 loop
             adc_val <= std_logic_vector(to_unsigned(i, adc_val'length));
             adc_en <= '1';
             wait for clock_period;
