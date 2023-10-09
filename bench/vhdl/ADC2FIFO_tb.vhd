@@ -52,6 +52,7 @@ architecture ADC2FIFO_tb_arch of ADC2FIFO_tb is
             send : IN STD_LOGIC;
             dout : OUT STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
             spi_tx_rdy : IN STD_LOGIC;
+            --debug : out std_logic_vector(2 downto 0);
             spi_tx_con : OUT std_logic
         );
     end component;
@@ -63,6 +64,7 @@ architecture ADC2FIFO_tb_arch of ADC2FIFO_tb is
     signal send: STD_LOGIC;
     signal dout: STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
     signal spi_tx_rdy: STD_LOGIC;
+    --signal debug : std_logic_vector(2 downto 0);
     signal spi_tx_con: std_logic ;
 
     constant clock_period: time := 10 ns;
@@ -77,6 +79,7 @@ begin
                  send          => send,
                  dout          => dout,
                  spi_tx_rdy    => spi_tx_rdy,
+                 --debug         => debug,
                  spi_tx_con    => spi_tx_con );
 
     stimulus: process

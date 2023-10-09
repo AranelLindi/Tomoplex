@@ -65,6 +65,8 @@ ENTITY ADC2FIFO IS
         dout : OUT STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
 
         spi_tx_rdy : IN STD_LOGIC; -- former: slave_select
+        
+        --debug : out std_logic_vector(2 downto 0);
 
         spi_tx_con : OUT std_logic -- former: deselect (IN)
     );
@@ -88,7 +90,7 @@ ARCHITECTURE ADC2FIFO_arch OF ADC2FIFO IS
     signal s_fifo_rden : std_logic := '0';
     signal s_fifo_wren : std_logic := '0';
 
-    signal s_send : std_logic := '0';
+    signal s_send : std_logic;
     signal s_tx_rdy : std_logic;
     signal s_tx_con : std_logic;
 
@@ -119,19 +121,20 @@ BEGIN
                 -- Synchronous reset.
                 s_dout <= (others => '0');
                 s_fifo_rden <= '0';
-                s_send <= '0';
                 s_rdcounter <= 0;
                 s_sendstate <= S_Idle;
             else
                 case s_sendstate is
                     when S_Idle =>
+                        --debug <= "001";
                         if s_send = '1' and s_fifo_empty = '0' then
                             s_sendstate <= S_Tx1;
                         end if;
 
                     when S_Tx1 =>
+                        --debug <= "010";                    
                         if s_fifo_empty = '0' then
-                            dout <= s_fifo_do;
+                            s_dout <= s_fifo_do;
                             s_fifo_rden <= '1';
                             
                             s_sendstate <= S_Tx2;
@@ -140,6 +143,7 @@ BEGIN
                         end if;
 
                     when S_Tx2 =>
+                        --debug <= "100";                    
                         s_fifo_rden <= '0';
 
                         if s_size /= c_fifo_size - 1 then
