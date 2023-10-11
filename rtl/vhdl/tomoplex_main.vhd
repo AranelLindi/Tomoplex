@@ -17,6 +17,7 @@
 -- Additional Comments:
 -- 
 ----------------------------------------------------------------------------------
+
 LIBRARY IEEE;
 USE IEEE.STD_LOGIC_1164.ALL;
 USE IEEE.NUMERIC_STD.ALL;
@@ -25,12 +26,21 @@ ENTITY tomoplex_main IS
     GENERIC (
         -- Length of the value delivered by the ADC.
         ADC_BITLEN : NATURAL := 8;
-
-        -- Number of used MUXs.
-        MUX_LEN : NATURAL := 12;
+        
+        -- SPI data width with the corresponding microcontroller.
+        DATA_WIDTH_MCU : integer := 16;
 
         -- Length of a normal data word via SPI.
-        SPI_DATAWIDTH : NATURAL := 8 
+        SPI_DATAWIDTH_MCU : NATURAL := 8;
+        
+        -- Frequency of the used fpga clock.
+        FPGA_FREQUENCY : Integer := 100_000_000; -- 100 MHz
+        
+        -- Frequency of the SPI master clock for mux controller communication.
+        SPI_FREQUENCY_MUX : integer := 2_000_000; -- Intentionally unspecified !
+        
+        -- SPI data width with mux controller communication.
+        DATA_WIDTH_MUX : integer := 8
     );
     PORT (
         -- System clock.
@@ -46,15 +56,18 @@ ENTITY tomoplex_main IS
         adc_en : IN STD_LOGIC;
 
         -- SPI related signals.
-        scl : IN STD_LOGIC;
-        mosi : IN STD_LOGIC;
-        miso : OUT STD_LOGIC := '0';
-        cs : IN STD_LOGIC; -- if not needed make it '0' !
+        scl_mcu : IN STD_LOGIC;
+        mosi_mcu : IN STD_LOGIC;
+        miso_mcu : OUT STD_LOGIC := '0';
+        cs_mcu : IN STD_LOGIC; -- if not needed make it '0' !
         
         debug : out std_logic_vector(2 downto 0);
 
         -- MUX control related signals.
-        mux : OUT STD_LOGIC_VECTOR((MUX_LEN - 1) DOWNTO 0)
+        scl_mux : out std_logic;
+        mosi_mux : out std_logic := '0';
+        miso_mux : in std_logic;
+        ss_mux : out std_logic
     );
 END tomoplex_main;
 
@@ -83,13 +96,20 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
 
     COMPONENT MUX_CTRL
         GENERIC (
-            MUX_LEN : NATURAL
+            Quarz_Taktfrequenz : Integer;
+            SPI_Taktfrequenz : integer;
+            DATA_WIDTH : integer
         );
         PORT (
             clk : IN STD_LOGIC;
             rst : IN STD_LOGIC;
-            reg : IN STD_LOGIC_VECTOR((MUX_LEN - 1) DOWNTO 0);
-            mux : OUT STD_LOGIC_VECTOR((MUX_LEN - 1) DOWNTO 0)
+            scl : out std_logic;
+            miso : in std_logic;
+            mosi : out std_logic;
+            ss : out std_logic;
+            sample : out std_logic;
+            reg : IN STD_LOGIC_VECTOR(15 DOWNTO 0);
+            mux : OUT STD_LOGIC_VECTOR(15 DOWNTO 0)
         );
     END COMPONENT;
 
@@ -161,28 +181,41 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
     end component;
 
     -- Various signals (unrelated yet)
-    SIGNAL s_register : STD_LOGIC_VECTOR((MUX_LEN - 1) DOWNTO 0);
+    SIGNAL s_register : STD_LOGIC_VECTOR(15 DOWNTO 0);
     SIGNAL s_send : STD_LOGIC;
     SIGNAL s_record : STD_LOGIC;
     
     SIGNAL s_mux_switchpos : STD_LOGIC_VECTOR(7 downto 0);
 
-    -- SPI related signals.
-    SIGNAL s_miso : STD_LOGIC := '0';
-    SIGNAL s_mosi : STD_LOGIC;
+    -- SPI related signals (MCU communication).
+    signal s_scl_mcu : std_logic;
+    signal s_cs_mcu : std_logic;
+    SIGNAL s_miso_mcu : STD_LOGIC := '0';
+    SIGNAL s_mosi_mcu : STD_LOGIC;
 
-    SIGNAL s_din : STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
-    SIGNAL s_dout : STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
+    SIGNAL s_din : STD_LOGIC_VECTOR((SPI_DATAWIDTH_mcu - 1) DOWNTO 0);
+    SIGNAL s_dout : STD_LOGIC_VECTOR((SPI_DATAWIDTH_mcu - 1) DOWNTO 0);
     SIGNAL s_rx_valid : STD_LOGIC;
     signal s_tx_rdy : std_logic;
     signal s_tx_con: std_logic; -- Shows if continuous transmitting is wanted.
     
-    signal s_do : std_logic_vector((SPI_DATAWIDTH-1) downto 0) := (others => '0'); -- unconnected TODO
-    signal s_di : std_logic_vector((SPI_DATAWIDTH-1) downto 0) := (others => '0'); -- unconnected TODO
+    signal s_do : std_logic_vector((SPI_DATAWIDTH_mcu-1) downto 0) := (others => '0'); -- unconnected TODO
+    signal s_di : std_logic_vector((SPI_DATAWIDTH_mcu-1) downto 0) := (others => '0'); -- unconnected TODO
+        
+    signal s_spi_send : std_logic_vector(SPI_DATAWIDTH_mcu-1 downto 0);
     
+    -- SPI related signals (MUX communication).
+    signal s_scl_mux : std_logic;
+    signal s_miso_mux : std_logic;
+    signal s_mosi_mux : std_logic;
+    signal s_cs_mux : std_logic;
     
-    signal s_spi_send : std_logic_vector(SPI_DATAWIDTH-1 downto 0);
+    signal s_mux : std_logic_vector(15 downto 0);
     
+    -- Sample signal for ADC2FIFO.
+    signal s_sample : std_logic;
+    
+    -- Fifo related registers.
     signal s_fifo_size : std_logic_vector(15 downto 0);
     signal s_fifo_elements : std_logic_vector(15 downto 0);
     
@@ -192,29 +225,31 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
 BEGIN
     -- Debug:
     --miso <= ;
-    mux <= s_fifo_elements(11 downto 0);
+    --mux <= s_fifo_elements(11 downto 0);
     
     -- Drive outputs.
-    miso <= s_miso;
+    miso_mcu <= s_miso_mcu;
         
     -- Read inputs.
-    s_mosi <= mosi;
+    s_scl_mcu <= scl_mcu;
+    s_cs_mcu <= cs_mcu;
+    s_mosi_mcu <= mosi_mcu;
 
 
     -- SPI Receiver.
     spi_slave_inst : spi_slave
         generic map (
-            N => SPI_DATAWIDTH,
+            N => SPI_DATAWIDTH_mcu,
             CPOL => '0',
             CPHA => '0',
             PREFETCH => 1 -- 3 is default value !
         )
         port map (
             clk_i => clk, -- done
-            spi_ssel_i => cs, -- done
-            spi_sck_i => scl, -- done
-            spi_mosi_i => s_mosi, -- done
-            spi_miso_o => s_miso, -- done 
+            spi_ssel_i => s_cs_mcu, -- done
+            spi_sck_i => s_scl_mcu, -- done
+            spi_mosi_i => s_mosi_mcu, -- done
+            spi_miso_o => s_miso_mcu, -- done 
             di_req_o => s_tx_rdy, -- TBD
             di_i => s_spi_send, -- done
             wren_i => s_tx_con,  -- TBD
@@ -232,7 +267,7 @@ BEGIN
     adc2fifo_inst : ADC2FIFO
     GENERIC MAP(
         ADC_BITLEN => ADC_BITLEN,
-        SPI_DATAWIDTH => SPI_DATAWIDTH
+        SPI_DATAWIDTH => SPI_DATAWIDTH_mcu
     )
     PORT MAP(
         clk => clk,
@@ -250,19 +285,28 @@ BEGIN
         );
 
     -- MUX_CTRL
---    mux_ctrl_inst : MUX_CTRL
---    GENERIC MAP(MUX_LEN => MUX_LEN)
---    PORT MAP(
---        clk => clk,
---        rst => rst,
---        reg => s_register,
---        mux => mux
---    );
+    mux_ctrl_inst : MUX_CTRL
+    GENERIC MAP(
+        Quarz_Taktfrequenz => FPGA_FREQUENCY,
+        SPI_Taktfrequenz => SPI_FREQUENCY_mux,
+        DATA_WIDTH => DATA_WIDTH_mux
+    )
+    PORT MAP(
+        clk => clk,
+        rst => rst,
+        scl => s_scl_mux,
+        miso => s_miso_mux,
+        mosi => s_mosi_mux,
+        ss => s_cs_mux,
+        sample => s_sample,
+        reg => s_register,
+        mux => s_mux
+    );
     
     
     -- Command Decoder
     process(clk)
-        variable i : integer range 0 to (2**SPI_DATAWIDTH)-1;
+        variable i : integer range 0 to (2**SPI_DATAWIDTH_MCU)-1;
     begin
         if rising_edge(clk) then
             if rst = '1' then
