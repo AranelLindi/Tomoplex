@@ -55,18 +55,20 @@ architecture ADC2SPI_tb_arch of ADC2SPI_tb is
             mosi : in std_logic;
             miso : out std_logic;
             cs : in std_logic;
+            debug : out std_logic_vector(2 downto 0);
             mux : out std_logic_vector((MUX_LEN-1) downto 0)
         );
     end component;
 
     signal clk: STD_LOGIC;
-    signal rst: STD_LOGIC;
-    signal adc_val: STD_LOGIC_VECTOR ((ADC_BITLEN - 1) DOWNTO 0);
-    signal adc_en: STD_LOGIC;
+    signal rst: STD_LOGIC := '0';
+    signal adc_val: STD_LOGIC_VECTOR ((ADC_BITLEN - 1) DOWNTO 0) := (Others => '0');
+    signal adc_en: STD_LOGIC := '0';
     signal scl: STD_LOGIC;
-    signal mosi: STD_LOGIC;
+    signal mosi: STD_LOGIC := '0';
     signal miso: STD_LOGIC;
-    signal cs: STD_LOGIC;
+    signal cs: STD_LOGIC := '1';
+    signal debug : std_logic_vector(2 downto 0);
     signal mux: STD_LOGIC_VECTOR((MUX_LEN - 1) DOWNTO 0);
 
     constant clock_period: time := 10 ns; -- 100 MHz
@@ -111,6 +113,7 @@ begin
             mosi => mosi,
             miso => miso,
             cs => cs,
+            debug => debug,
             mux => mux
         );
 
@@ -118,11 +121,11 @@ begin
     stimulus_spi: process
     begin
         -- Put initialisation code here
+        cs <= '1';
+        mosi <= '0';
         rst <= '1';
         wait for 10 * clock_period;
         rst <= '0';
-        mosi <= '0';
-        cs <= '1';
         
         -- Put test bench stimulus code here
         
@@ -147,7 +150,7 @@ begin
         
         -- Put test bench stimulus code here
         
-        wait until rising_edge(clk);
+        wait until falling_edge(clk);
         for i in 1 to 15 loop
             adc_val <= std_logic_vector(to_unsigned(i, adc_val'length));
             adc_en <= '1';

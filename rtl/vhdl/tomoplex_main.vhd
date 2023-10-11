@@ -48,8 +48,10 @@ ENTITY tomoplex_main IS
         -- SPI related signals.
         scl : IN STD_LOGIC;
         mosi : IN STD_LOGIC;
-        miso : OUT STD_LOGIC;
+        miso : OUT STD_LOGIC := '0';
         cs : IN STD_LOGIC; -- if not needed make it '0' !
+        
+        debug : out std_logic_vector(2 downto 0);
 
         -- MUX control related signals.
         mux : OUT STD_LOGIC_VECTOR((MUX_LEN - 1) DOWNTO 0)
@@ -68,9 +70,13 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
             rst : IN STD_LOGIC;
             adc_val : IN STD_LOGIC_VECTOR((ADC_BITLEN - 1) DOWNTO 0);
             adc_en : IN STD_LOGIC;
+            sample_en : in std_logic;
             send : IN STD_LOGIC;
+            fifo_size : out std_logic_vector(15 downto 0);
+            fifo_elements : out std_logic_vector(15 downto 0);
             dout : OUT STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
             spi_tx_rdy : in std_Logic;
+            debug : out std_logic_vector(2 downto 0);
             spi_tx_con : out std_logic
         );
     END COMPONENT;
@@ -177,7 +183,8 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
     
     signal s_spi_send : std_logic_vector(SPI_DATAWIDTH-1 downto 0);
     
-    
+    signal s_fifo_size : std_logic_vector(15 downto 0);
+    signal s_fifo_elements : std_logic_vector(15 downto 0);
     
     -- Command Decoder.
     Type CommandDecoderStates IS (S_Decode, S_Reset);
@@ -185,11 +192,10 @@ ARCHITECTURE tomoplex_main_arch OF tomoplex_main IS
 BEGIN
     -- Debug:
     --miso <= ;
-    mux(7 downto 0) <= s_spi_send;
-    mux(mux'high downto 8) <= (others => '0');
+    mux <= s_fifo_elements(11 downto 0);
     
     -- Drive outputs.
-    miso <= s_send;-- s_miso;
+    miso <= s_miso;
         
     -- Read inputs.
     s_mosi <= mosi;
@@ -201,7 +207,7 @@ BEGIN
             N => SPI_DATAWIDTH,
             CPOL => '0',
             CPHA => '0',
-            PREFETCH => 3 -- 3 is default value !
+            PREFETCH => 1 -- 3 is default value !
         )
         port map (
             clk_i => clk, -- done
@@ -229,13 +235,17 @@ BEGIN
         SPI_DATAWIDTH => SPI_DATAWIDTH
     )
     PORT MAP(
-        clk => scl,
+        clk => clk,
         rst => rst,
         adc_val => adc_val,
         adc_en => adc_en,
+        sample_en => '1', -- TODO: Has to be changed as soon as MUX entity is integrated !
         send => s_send, -- TODO!
+        fifo_size => s_fifo_size,
+        fifo_elements => s_fifo_elements,
         dout => s_spi_send, -- SPI entity related
         spi_tx_rdy => s_tx_rdy, -- SPI entity related
+        debug => debug,
         spi_tx_con => s_tx_con -- SPI entity related
         );
 

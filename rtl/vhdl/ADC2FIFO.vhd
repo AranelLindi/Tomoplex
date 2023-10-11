@@ -39,7 +39,7 @@ ENTITY ADC2FIFO IS
         ADC_BITLEN : NATURAL;
 
         -- Length of a data word via SPI.
-        SPI_DATAWIDTH : NATURAL
+        SPI_DATAWIDTH : NATURAL := 8
     );
     PORT (
         -- System clock.
@@ -54,8 +54,17 @@ ENTITY ADC2FIFO IS
         -- Valid data on adc_val.
         adc_en : IN STD_LOGIC;
 
+        -- HIGH if ADC values shall be stored into fifo.
+        sample_en : IN STD_LOGIC;
+
         -- Send command: All FIFO entries are sent via SPI to master.
         send : IN STD_LOGIC;
+
+        -- Returns the constant size of the FIFO.
+        fifo_size : out std_logic_vector(15 downto 0);
+
+        -- Elements contained in the FIFO.
+        fifo_elements : out std_logic_vector(15 downto 0);
 
 
         -- TODO: Here is a signal missing which indicates whether the SPI slave is ready to send another data word.
@@ -65,8 +74,8 @@ ENTITY ADC2FIFO IS
         dout : OUT STD_LOGIC_VECTOR((SPI_DATAWIDTH - 1) DOWNTO 0);
 
         spi_tx_rdy : IN STD_LOGIC; -- former: slave_select
-        
-        --debug : out std_logic_vector(2 downto 0);
+
+        debug : out std_logic_vector(2 downto 0);
 
         spi_tx_con : OUT std_logic -- former: deselect (IN)
     );
@@ -74,7 +83,7 @@ END ADC2FIFO;
 
 ARCHITECTURE ADC2FIFO_arch OF ADC2FIFO IS
     -- Constants.
-    constant c_fifo_size : INTEGEr := 4097; -- p. 57 UG473 (table 2-7)
+    constant c_fifo_size : INTEGER := 4097; -- p. 57 UG473 (table 2-7)
 
     -- FIFO related signals.
     signal s_fifo_almostempty : std_logic;
@@ -96,12 +105,16 @@ ARCHITECTURE ADC2FIFO_arch OF ADC2FIFO IS
 
     signal s_dout : std_logic_vector(SPI_DATAWIDTH-1 downto 0);
 
+    signal s_adc_val : std_logic_vector(ADC_BITLEN-1 downto 0);
+    signal s_adc_en : std_logic;
+    signal s_sample_en : std_logic;
+
     type sendstates is (S_Idle, S_Tx1, S_Tx2);
     signal s_sendstate : sendstates := S_Idle;
 
     signal s_rdcounter : integer range 0 to c_fifo_size;
     signal s_wrcounter : integer range 0 to c_fifo_size;
-    signal s_size : unsigned(integer(ceil(log2(real(c_fifo_size))))-1 downto 0) := (others => '0');
+    signal s_size : unsigned(15 downto 0) := (others => '0'); -- 2 Bytes is completely sufficient to represent all possible FIFO depths constants (see below)
 BEGIN
     -- Read inputs.
     s_send <= send;
@@ -110,10 +123,13 @@ BEGIN
 
     -- Drive outputs.
     dout <= s_dout;
-    spi_tx_con <= s_fifo_rden;-- s_fifo_empty; -- s_tx_con
+    spi_tx_con <= s_tx_con;
+
+    fifo_size <= std_logic_vector(to_unsigned(c_fifo_size, fifo_size'length));
+    fifo_elements <= std_logic_vector(s_size); -- TODO: HIER WEITERMACHEN ! LÖSUNG FINDEN FÜR UNTERSCHIEDLICHE VEKTORLÄNGEN !
 
 
-
+    -- Reads data out of the fifo.
     sending: process(clk)
     begin
         if rising_edge(clk) then
@@ -122,40 +138,73 @@ BEGIN
                 s_dout <= (others => '0');
                 s_fifo_rden <= '0';
                 s_rdcounter <= 0;
+                s_tx_con <= '0';
                 s_sendstate <= S_Idle;
             else
                 case s_sendstate is
                     when S_Idle =>
-                        --debug <= "001";
+                        debug <= "001";
+
+                        s_tx_con <= '0'; -- This has to be here to be able to insert user-defined tokens into the SPI stream!
                         if s_send = '1' and s_fifo_empty = '0' then
                             s_sendstate <= S_Tx1;
                         end if;
 
                     when S_Tx1 =>
-                        --debug <= "010";                    
-                        if s_fifo_empty = '0' then
-                            s_dout <= s_fifo_do;
-                            s_fifo_rden <= '1';
-                            
-                            s_sendstate <= S_Tx2;
+                        debug <= "010";
+                        if s_tx_rdy = '1' then
+                            if s_fifo_empty = '0' then
+                                -- Fifo is not empty.
+                                s_dout <= s_fifo_do;
+                                s_fifo_rden <= '1';
+
+                                s_tx_con <= '1';
+
+                                s_sendstate <= S_Tx2;
+                            else
+                                -- Fifo is empty.
+
+                                -- Send token instead!
+                                s_dout <= (others => '1'); -- this can be configured as desired ! But it should be unique to seperate it from ADC data samples !
+                                s_tx_con <= '1';
+
+                                s_sendstate <= S_Idle;
+                            end if;
                         else
-                            s_sendstate <= S_Idle;
+                            s_sendstate <= S_Tx1;
                         end if;
 
                     when S_Tx2 =>
-                        --debug <= "100";                    
+                        debug <= "100";
                         s_fifo_rden <= '0';
+                        s_tx_con <= '0';
 
-                        if s_size /= c_fifo_size - 1 then
-                            if s_rdcounter = (c_fifo_size - 1) then
-                                s_rdcounter <= 0; -- wrap                            
-                            else
+                        IF s_size > 0 THEN -- s_size contains available elements to read
+                            IF s_rdcounter = (c_fifo_size - 1) THEN
+                                s_rdcounter <= 0; -- wrap
+                            ELSE
                                 s_rdcounter <= s_rdcounter + 1;
-                            end if;
-                        end if;
+                            END IF;
+                        END IF;
 
                         s_sendstate <= S_Tx1;
                 end case;
+            end if;
+        end if;
+    end process;
+
+    -- Samples ADC inputs.
+    process(clk)
+    begin
+        if rising_edge(clk) then
+            if rst = '1' then
+                s_adc_val <= (others => '0');
+                s_adc_en <= '0';
+                s_sample_en <= '0';
+            else
+                s_adc_val <= adc_val;
+                s_adc_en <= adc_en and s_sample_en; -- Data shall only be stored if requested (by MUX for example)
+                s_sample_en <= sample_en;
             end if;
         end if;
     end process;
@@ -168,18 +217,16 @@ BEGIN
                 s_fifo_wren <= '0';
                 s_wrcounter <= 0;
             else
-                if adc_en = '1' then
-                    --s_fifo_di <= 
-                    --report "Write into fifo: " & integer'image(to_integer(unsigned(adc_val)));
+                if s_adc_en = '1' then
                     s_fifo_wren <= '1';
 
-                    if s_size > 0 then
-                        if s_wrcounter = (c_fifo_size - 1) then
+                    IF s_size /= c_fifo_size - 1 THEN -- prevents that value of rdcounter is bigger than wrcounter altough fifo is empty
+                        IF s_wrcounter = (c_fifo_size - 1) THEN
                             s_wrcounter <= 0; -- wrap
-                        else
+                        ELSE
                             s_wrcounter <= s_wrcounter + 1;
-                        end if;
-                    end if;
+                        END IF;
+                    END IF;
                 else
                     s_fifo_wren <= '0';
                 end if;
@@ -187,15 +234,15 @@ BEGIN
         end if;
     end process;
 
-
-    process(s_rdcounter, s_wrcounter)
-    begin
-        if s_wrcounter >= s_rdcounter then
-            s_size <= to_unsigned(c_fifo_size + s_rdcounter - s_wrcounter - 1, s_size'length);
-        else -- s_wrcounter < s_rdcounter
-            s_size <= to_unsigned(s_rdcounter - s_wrcounter - 1, s_size'length);
-        end if;
-    end process;
+    -- Calculates FIFOs free space.
+    size_calc : PROCESS (s_rdcounter, s_wrcounter)
+    BEGIN
+        IF s_wrcounter >= s_rdcounter THEN
+            s_size <= to_unsigned(s_wrcounter - s_rdcounter, s_size'length);
+        ELSE -- s_wrcounter < s_rdcounter
+            s_size <= to_unsigned(c_fifo_size + s_wrcounter - s_rdcounter, s_size'length);
+        END IF;
+    END PROCESS size_calc;
 
 
     -- FIFO_DUALCLOCK_MACRO: Dual-Clock First-In, First-Out (FIFO) RAM Buffer
@@ -237,7 +284,7 @@ BEGIN
             RDERR => s_fifo_wrerr,               -- 1-bit output read error
             WRCOUNT => s_fifo_wrcount,           -- Output write count, width determined by FIFO depth
             WRERR => s_fifo_wrerr,               -- 1-bit output write error
-            DI => adc_val, --s_fifo_di(ADC_BITLEN-1 downto 0),                     -- Input data, width defined by DATA_WIDTH parameter
+            DI => s_adc_val, --s_fifo_di(ADC_BITLEN-1 downto 0),                     -- Input data, width defined by DATA_WIDTH parameter
             RDCLK => clk,               -- 1-bit input read clock
             RDEN => s_fifo_rden,                 -- 1-bit input read enable
             RST => rst,                   -- 1-bit input reset
